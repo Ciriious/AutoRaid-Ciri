@@ -6,6 +6,7 @@ Requirements:
 """
 
 import tkinter as tk
+import tkinter.simpledialog as simpledialog
 import threading, time, re, sys, traceback, os, ctypes, json
 from collections import Counter
 
@@ -23,15 +24,13 @@ except ImportError as e:
     sys.exit(1)
 
 pyautogui.FAILSAFE = True
-pyautogui.PAUSE    = 0.0   # remove built-in 0.1s delay between pyautogui calls
+pyautogui.PAUSE    = 0.0
 
-# ── Tesseract: prefer local copy next to this script ──────────────────────────
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _LOCAL_TESS = os.path.join(_SCRIPT_DIR, "tesseract.exe")
 if os.path.isfile(_LOCAL_TESS):
     pytesseract.pytesseract.tesseract_cmd = _LOCAL_TESS
 
-# ── config ────────────────────────────────────────────────────────────────────
 CONFIG_PATH = os.path.join(_SCRIPT_DIR, "overlay_config.json")
 
 def _load_config():
@@ -44,33 +43,32 @@ def _save_config(data):
         with open(CONFIG_PATH, "w") as f: json.dump(data, f, indent=2)
     except: pass
 
-# ── palette  (matches site screenshot) ────────────────────────────────────────
-BG         = "#0d0f18"    # deepest background
-PANEL      = "#13151f"    # card / panel
-PANEL2     = "#181b27"    # slightly lighter panel
-BORDER     = "#23263a"    # subtle card border
-BORDER_HI  = "#343760"    # hover / active border
-ACCENT     = "#7c6af7"    # purple  (site primary)
-ACCENT2    = "#f0a500"    # gold    (site secondary)
+# ── palette ───────────────────────────────────────────────────────────────────
+BG         = "#0d0f18"
+PANEL      = "#13151f"
+PANEL2     = "#181b27"
+PANEL3     = "#0f1120"    # sidebar background — slightly deeper than BG
+BORDER     = "#23263a"
+BORDER_HI  = "#343760"
+ACCENT     = "#7c6af7"
+ACCENT2    = "#f0a500"
 GREEN      = "#2ecc71"
 RED        = "#e74c3c"
-FG         = "#cdd2e8"    # primary text
-FG2        = "#6a7090"    # muted text
-FG3        = "#333756"    # very dim
+FG         = "#cdd2e8"
+FG2        = "#6a7090"
+FG3        = "#333756"
 
-TRANSP_KEY = "#010203"    # colour-key for window transparency
+TRANSP_KEY = "#010203"
 
-# Per-slot accent colours matching the site's coloured card outlines
 SLOT_COLS  = ["#c8a0ff", "#f0a500", "#e74c3c", "#4d96ff", "#2ecc71"]
-ZONE_COLS  = [ACCENT] + SLOT_COLS   # index 0 = timer zone
+ZONE_COLS  = [ACCENT] + SLOT_COLS
 
 TITLE_H      = 44
-FOOTER_H_MIN = 90    # height with 0 rows (header + add-btn only)
-ROW_H        = 22    # height of each time row
-FOOTER_PAD   = 50    # fixed vertical padding around rows inside footer
+ROW_H        = 22
 BORDER_W     = 1
 
-# Slots start with no rows by default — user adds rows via "+ ADD TIME"
+SIDEBAR_W    = 190   # width of the profile library panel
+
 DEFAULT_SLOT_TIMES = [[]] * 5
 
 
@@ -85,7 +83,6 @@ def _default_zones():
         [0.84, 0.85, 0.95, 0.99],
     ]
 
-# ── Win32 helpers ─────────────────────────────────────────────────────────────
 def _make_layered(hwnd):
     try:
         GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000
@@ -93,9 +90,7 @@ def _make_layered(hwnd):
         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, s | WS_EX_LAYERED)
     except: pass
 
-# ── time helpers ──────────────────────────────────────────────────────────────
 def _str_to_cs(s):
-    """'MM:SS:cs' string → centiseconds int.  Returns None on bad input."""
     s = s.strip()
     m = re.fullmatch(r"(\d{1,2}):(\d{2}):(\d{2})", s)
     if m:
@@ -109,6 +104,7 @@ def _cs_to_str(cs):
     mm, rem = divmod(cs, 6000)
     ss, ms  = divmod(rem, 100)
     return f"{mm:02d}:{ss:02d}:{ms:02d}"
+
 
 # ── ZoneHandle ────────────────────────────────────────────────────────────────
 class ZoneHandle:
@@ -198,8 +194,6 @@ class ZoneHandle:
 
 # ── SlotColumn ────────────────────────────────────────────────────────────────
 class SlotColumn(tk.Frame):
-    """One slot card.  Times stored/displayed as 'MM:SS:cs' strings."""
-
     def __init__(self, parent, slot_idx, colour, initial_times, on_rows_changed=None):
         super().__init__(parent, bg=PANEL2, bd=0,
                          highlightbackground=colour, highlightthickness=1)
@@ -208,17 +202,13 @@ class SlotColumn(tk.Frame):
         self._time_rows       = []
         self._on_rows_changed = on_rows_changed
 
-        # ── header ────────────────────────────────────────────────────────────
         hdr = tk.Frame(self, bg=PANEL2)
         hdr.pack(fill="x", padx=4, pady=(5, 2))
 
-        # coloured top-bar accent line
         bar_line = tk.Frame(self, bg=colour, height=2)
         bar_line.place(x=0, y=0, relwidth=1)
 
-        # dot + label
-        dot = tk.Canvas(hdr, bg=PANEL2, width=8, height=8,
-                        highlightthickness=0)
+        dot = tk.Canvas(hdr, bg=PANEL2, width=8, height=8, highlightthickness=0)
         dot.create_oval(1,1,7,7, fill=colour, outline="")
         dot.pack(side="left", padx=(0,4))
 
@@ -232,11 +222,9 @@ class SlotColumn(tk.Frame):
                        relief="flat", bd=0, padx=0, pady=0,
                        cursor="hand2").pack(side="right")
 
-        # ── time list ─────────────────────────────────────────────────────────
         self.list_frame = tk.Frame(self, bg=PANEL2)
         self.list_frame.pack(fill="both", expand=True, padx=4)
 
-        # ── add button ────────────────────────────────────────────────────────
         add_btn_frame = tk.Frame(self, bg=PANEL2)
         add_btn_frame.pack(fill="x", padx=4, pady=(1,4))
         self._add_btn = tk.Button(add_btn_frame, text="+ ADD TIME", command=self._add_row,
@@ -266,9 +254,6 @@ class SlotColumn(tk.Frame):
         row.pack(fill="x", pady=1)
 
         val_var = tk.StringVar(value=initial_text)
-
-        # Single entry with auto-formatting: digits only, auto-inserts colons
-        # at positions 2 and 4, max 8 chars (MM:SS:cs)
         ent = tk.Entry(row, textvariable=val_var, width=9,
                        bg=PANEL, fg=self.colour,
                        insertbackground=self.colour,
@@ -280,21 +265,12 @@ class SlotColumn(tk.Frame):
                        justify="center")
         ent.pack(side="left", fill="x", expand=True, ipady=3)
 
-        # We track the raw digits ourselves rather than parsing the widget's
-        # cursor/selection state — typing is always append-to-end and
-        # backspace always removes the last digit, like a PIN-code field.
-        # This avoids bugs where stray cursor positions (e.g. from clicking
-        # mid-field) cause new digits to land in the wrong place and the
-        # value reading backwards (e.g. typing "15" producing "51").
         digits_state = [re.sub(r"[^0-9]", "", initial_text)[:6]]
-
         PLACEHOLDER = "Time"
 
         def _render():
             digits = digits_state[0]
             if not digits:
-                # Show greyed-out placeholder; this is never parsed as a
-                # real trigger (get_triggers checks digits_state directly).
                 ent.config(fg=FG3)
                 val_var.set(PLACEHOLDER)
                 ent.icursor(0)
@@ -305,15 +281,12 @@ class SlotColumn(tk.Frame):
             ent.icursor(tk.END)
 
         def _on_key(event, e=ent):
-            # Allow Tab/Return through for normal focus navigation.
             if event.keysym in ("Tab", "Return", "KP_Enter"):
                 return
             if event.keysym in ("BackSpace", "Delete"):
                 digits_state[0] = digits_state[0][:-1]
                 _render()
                 return "break"
-            # Block everything else (including Left/Right/Home/End — this
-            # field is append/backspace only, by design) except digits.
             if not event.char or not event.char.isdigit():
                 return "break"
             if len(digits_state[0]) < 6:
@@ -353,11 +326,279 @@ class SlotColumn(tk.Frame):
         out = []
         for e in self._time_rows:
             if not e["digits"][0]:
-                continue  # empty / still showing placeholder — skip
+                continue
             cs = _str_to_cs(e["val"].get())
             if cs is not None:
                 out.append(cs)
         return out
+
+    def get_times_data(self):
+        """Return list of time strings for serialisation."""
+        result = []
+        for e in self._time_rows:
+            if e["digits"][0]:
+                result.append(e["val"].get())
+        return result
+
+    def set_times_data(self, times):
+        """Clear all rows and load from a list of time strings."""
+        for entry in list(self._time_rows):
+            entry["frame"].destroy()
+        self._time_rows.clear()
+        self._update_add_btn()
+        for t in times:
+            self._add_row(t)
+
+
+# ── ProfileLibrary ────────────────────────────────────────────────────────────
+class ProfileLibrary(tk.Frame):
+    """
+    Left-side panel.  Profiles stored as a list under cfg["profiles"].
+    Each profile: {"name": str, "slots": [[time_str, ...], ...]}
+    """
+    PANEL_W = SIDEBAR_W
+
+    def __init__(self, parent, on_load, on_save_current):
+        super().__init__(parent, bg=PANEL3, width=self.PANEL_W)
+        self.pack_propagate(False)
+        self._on_load        = on_load    # callback(slot_times_list)
+        self._on_save_current = on_save_current  # callback() -> slot_times_list
+
+        self._profiles       = []   # list of {"name":..., "slots":...}
+        self._selected_idx   = None
+        self._row_frames     = []
+
+        self._build()
+        self._load_from_config()
+
+    # ── layout ────────────────────────────────────────────────────────────────
+    def _build(self):
+        # Header bar
+        hdr = tk.Frame(self, bg=PANEL3, height=TITLE_H)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+
+        # purple top accent stripe
+        tk.Frame(hdr, bg=ACCENT, height=2).place(x=0, y=0, relwidth=1)
+
+        tk.Label(hdr, text="⊞", bg=PANEL3, fg=ACCENT,
+                 font=("Segoe UI", 12)).pack(side="left", padx=(10, 4), pady=4)
+        tk.Label(hdr, text="PROFILES", bg=PANEL3, fg=FG,
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
+
+        # divider
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
+
+        # Scrollable list area
+        list_outer = tk.Frame(self, bg=PANEL3)
+        list_outer.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(list_outer, bg=PANEL3, highlightthickness=0,
+                           bd=0)
+        scroll = tk.Scrollbar(list_outer, orient="vertical",
+                               command=canvas.yview, width=6,
+                               bg=PANEL3, troughcolor=PANEL3,
+                               activebackground=ACCENT)
+        canvas.configure(yscrollcommand=scroll.set)
+
+        scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        self._list_canvas = canvas
+        self._inner = tk.Frame(canvas, bg=PANEL3)
+        self._inner_win = canvas.create_window((0, 0), window=self._inner,
+                                                anchor="nw")
+
+        self._inner.bind("<Configure>", self._on_inner_configure)
+        canvas.bind("<Configure>", self._on_canvas_configure)
+        canvas.bind("<MouseWheel>", lambda e:
+            canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # ── bottom action bar ─────────────────────────────────────────────────
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
+
+        btn_bar = tk.Frame(self, bg=PANEL3)
+        btn_bar.pack(fill="x", pady=6, padx=6)
+
+        # NEW profile button
+        self._btn_new = tk.Button(btn_bar, text="+ NEW",
+                  command=self._new_profile,
+                  bg=ACCENT, fg="white", relief="flat", bd=0,
+                  font=("Segoe UI", 7, "bold"), padx=8, pady=4,
+                  cursor="hand2",
+                  activebackground="#6a5ae0", activeforeground="white")
+        self._btn_new.pack(fill="x", pady=(0, 3))
+
+        # SAVE INTO SELECTED
+        self._btn_save = tk.Button(btn_bar, text="💾  SAVE",
+                  command=self._save_into_selected,
+                  bg=PANEL, fg=FG2, relief="flat", bd=0,
+                  font=("Segoe UI", 7, "bold"), padx=8, pady=4,
+                  cursor="hand2",
+                  activebackground=BORDER_HI, activeforeground=FG,
+                  state="disabled")
+        self._btn_save.pack(fill="x", pady=(0, 3))
+
+        # DELETE SELECTED
+        self._btn_del = tk.Button(btn_bar, text="✕  DELETE",
+                  command=self._delete_selected,
+                  bg=PANEL, fg=FG2, relief="flat", bd=0,
+                  font=("Segoe UI", 7, "bold"), padx=8, pady=4,
+                  cursor="hand2",
+                  activebackground=BORDER_HI, activeforeground=RED,
+                  state="disabled")
+        self._btn_del.pack(fill="x")
+
+        # tip label
+        tk.Label(self, text="Click to load · double-click to rename",
+                 bg=PANEL3, fg=FG3, font=("Segoe UI", 6),
+                 wraplength=SIDEBAR_W - 10).pack(pady=(2, 6))
+
+    def _on_inner_configure(self, e):
+        self._list_canvas.configure(scrollregion=self._list_canvas.bbox("all"))
+
+    def _on_canvas_configure(self, e):
+        self._list_canvas.itemconfig(self._inner_win, width=e.width)
+
+    # ── data helpers ──────────────────────────────────────────────────────────
+    def _load_from_config(self):
+        cfg = _load_config()
+        self._profiles = cfg.get("profiles", [])
+        self._refresh_list()
+
+    def save_to_config(self):
+        cfg = _load_config()
+        cfg["profiles"] = self._profiles
+        _save_config(cfg)
+
+    # ── list rendering ────────────────────────────────────────────────────────
+    def _refresh_list(self):
+        for f in self._row_frames:
+            f.destroy()
+        self._row_frames.clear()
+
+        if not self._profiles:
+            lbl = tk.Label(self._inner,
+                           text="No profiles yet.\nClick  + NEW  to save\nyour current timings.",
+                           bg=PANEL3, fg=FG3,
+                           font=("Segoe UI", 7), justify="center")
+            lbl.pack(pady=20)
+            self._row_frames.append(lbl)
+            self._selected_idx = None
+            self._update_buttons()
+            return
+
+        for i, prof in enumerate(self._profiles):
+            self._build_row(i, prof)
+
+        self._update_buttons()
+
+    def _build_row(self, idx, prof):
+        is_sel = (idx == self._selected_idx)
+        bg_row = BORDER_HI if is_sel else PANEL3
+        fg_row = FG if is_sel else FG2
+
+        row = tk.Frame(self._inner, bg=bg_row, cursor="hand2")
+        row.pack(fill="x", padx=4, pady=2)
+        self._row_frames.append(row)
+
+        # coloured left stripe
+        stripe_col = SLOT_COLS[idx % len(SLOT_COLS)]
+        tk.Frame(row, bg=stripe_col if is_sel else FG3,
+                 width=3).pack(side="left", fill="y")
+
+        content = tk.Frame(row, bg=bg_row)
+        content.pack(side="left", fill="both", expand=True, padx=(6, 4), pady=5)
+
+        # Profile name
+        tk.Label(content, text=prof["name"], bg=bg_row, fg=fg_row,
+                 font=("Segoe UI", 8, "bold" if is_sel else "normal"),
+                 anchor="w").pack(fill="x")
+
+        # Summary of slot counts
+        slots = prof.get("slots", [[] for _ in range(5)])
+        summary_parts = []
+        for si, times in enumerate(slots):
+            if times:
+                summary_parts.append(f"S{si+1}:{len(times)}")
+        summary = "  ".join(summary_parts) if summary_parts else "empty"
+        tk.Label(content, text=summary, bg=bg_row, fg=FG3,
+                 font=("Segoe UI", 6), anchor="w").pack(fill="x")
+
+        # Selection indicator
+        if is_sel:
+            tk.Label(row, text="▶", bg=bg_row, fg=ACCENT,
+                     font=("Segoe UI", 8)).pack(side="right", padx=4)
+
+        # Bindings
+        for w in [row, content] + list(content.winfo_children()):
+            w.bind("<Button-1>",        lambda e, i=idx: self._select(i))
+            w.bind("<Double-Button-1>", lambda e, i=idx: self._rename(i))
+            w.bind("<Enter>",           lambda e, f=row, b=bg_row:
+                f.config(bg="#1e2035") if not (f == self._get_sel_frame()) else None)
+            w.bind("<Leave>",           lambda e, f=row, b=bg_row:
+                f.config(bg=b))
+
+    def _get_sel_frame(self):
+        if self._selected_idx is not None and self._selected_idx < len(self._row_frames):
+            return self._row_frames[self._selected_idx]
+        return None
+
+    def _select(self, idx):
+        self._selected_idx = idx
+        self._refresh_list()
+        self._on_load(self._profiles[idx].get("slots", [[] for _ in range(5)]))
+
+    def _rename(self, idx):
+        old = self._profiles[idx]["name"]
+        new = simpledialog.askstring("Rename Profile", "Profile name:",
+                                     initialvalue=old, parent=self)
+        if new and new.strip():
+            self._profiles[idx]["name"] = new.strip()
+            self.save_to_config()
+            self._refresh_list()
+
+    def _new_profile(self):
+        name = simpledialog.askstring("New Profile", "Profile name:", parent=self)
+        if not name or not name.strip():
+            return
+        slots_data = self._on_save_current()
+        self._profiles.append({"name": name.strip(), "slots": slots_data})
+        self._selected_idx = len(self._profiles) - 1
+        self.save_to_config()
+        self._refresh_list()
+
+    def _save_into_selected(self):
+        if self._selected_idx is None: return
+        slots_data = self._on_save_current()
+        self._profiles[self._selected_idx]["slots"] = slots_data
+        self.save_to_config()
+        self._refresh_list()
+        # Flash "Saved!" briefly
+        self._btn_save.config(text="✓  SAVED!", fg=GREEN)
+        self.after(1200, lambda: self._btn_save.config(text="💾  SAVE", fg=FG2))
+
+    def _delete_selected(self):
+        if self._selected_idx is None: return
+        name = self._profiles[self._selected_idx]["name"]
+        # Confirm via a simple tk dialog
+        import tkinter.messagebox as mb
+        if not mb.askyesno("Delete Profile",
+                           f'Delete profile  "{name}"?',
+                           parent=self):
+            return
+        del self._profiles[self._selected_idx]
+        self._selected_idx = None
+        self.save_to_config()
+        self._refresh_list()
+
+    def _update_buttons(self):
+        has_sel = self._selected_idx is not None
+        state = "normal" if has_sel else "disabled"
+        fg_save = FG2 if has_sel else FG3
+        fg_del  = FG2 if has_sel else FG3
+        self._btn_save.config(state=state, fg=fg_save)
+        self._btn_del.config(state=state, fg=fg_del)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -371,7 +612,7 @@ class App(tk.Tk):
         self.configure(bg=BG)
 
         cfg = _load_config()
-        self.geometry(cfg.get("geometry", "1100x660+60+60"))
+        self.geometry(cfg.get("geometry", "1290x660+60+60"))
         self.zones      = cfg.get("zones", _default_zones())
         self.running    = False
         self.edit_mode  = False
@@ -385,63 +626,65 @@ class App(tk.Tk):
         self.after(300, lambda: _make_layered(
             ctypes.windll.user32.GetForegroundWindow()))
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        # Capture the canvas height once after layout settles, then size footer
         self._canvas_h = None
         self.after(150, self._init_canvas_h)
         self.after(200, self._show_disclaimer)
 
-    # ── disclaimer banner ─────────────────────────────────────────────────────
+    # ── disclaimer ────────────────────────────────────────────────────────────
     def _show_disclaimer(self):
-        """Red banner overlay with accuracy warning — dismissible via ✕ button."""
         banner = tk.Frame(self, bg="#7b0e0e", bd=0)
-        banner.place(relx=0, rely=0, relwidth=1, anchor="nw",
-                     y=TITLE_H)   # sit flush below the title bar
+        banner.place(relx=0, rely=0, relwidth=1, anchor="nw", y=TITLE_H)
 
-        # left red accent stripe
         tk.Frame(banner, bg="#e74c3c", width=4).pack(side="left", fill="y")
-
-        # icon
         tk.Label(banner, text="⚠", bg="#7b0e0e", fg="#ffb3b3",
                  font=("Segoe UI", 11, "bold")).pack(side="left", padx=(8, 4), pady=6)
 
-        # message block
         msg_frame = tk.Frame(banner, bg="#7b0e0e")
         msg_frame.pack(side="left", fill="both", expand=True, pady=6)
 
-        tk.Label(msg_frame,
-                 text="ACCURACY DISCLAIMER — Click timings are approximate.",
-                 bg="#7b0e0e", fg="#ffe0e0",
-                 font=("Segoe UI", 8, "bold"),
+        tk.Label(msg_frame, text="ACCURACY DISCLAIMER — Click timings are approximate.",
+                 bg="#7b0e0e", fg="#ffe0e0", font=("Segoe UI", 8, "bold"),
                  anchor="w").pack(fill="x")
-
         tk.Label(msg_frame,
                  text="Expected range per trigger:  +0.05 s  |  +0.03 s  |  Exact  |  −0.01 s  |  −0.03 s",
-                 bg="#7b0e0e", fg="#ffb3b3",
-                 font=("Segoe UI", 7),
-                 anchor="w").pack(fill="x")
-
+                 bg="#7b0e0e", fg="#ffb3b3", font=("Segoe UI", 7), anchor="w").pack(fill="x")
         tk.Label(msg_frame,
                  text="OCR latency, system load, and game framerate all affect precision. Fine-tune your trigger times if needed.",
-                 bg="#7b0e0e", fg="#cc8888",
-                 font=("Segoe UI", 7),
-                 anchor="w").pack(fill="x")
+                 bg="#7b0e0e", fg="#cc8888", font=("Segoe UI", 7), anchor="w").pack(fill="x")
 
-        # close button
         def _dismiss():
-            banner.place_forget()
-            banner.destroy()
+            banner.place_forget(); banner.destroy()
 
         tk.Button(banner, text="✕", command=_dismiss,
                   bg="#7b0e0e", fg="#ffb3b3", relief="flat", bd=0,
-                  font=("Segoe UI", 10, "bold"), padx=10,
-                  cursor="hand2",
-                  activebackground="#9b1a1a",
-                  activeforeground="white").pack(side="right", padx=(0, 6), pady=4)
+                  font=("Segoe UI", 10, "bold"), padx=10, cursor="hand2",
+                  activebackground="#9b1a1a", activeforeground="white").pack(
+                      side="right", padx=(0, 6), pady=4)
 
     # ── build ─────────────────────────────────────────────────────────────────
     def _build(self):
         self._build_titlebar()
-        self.canvas = tk.Canvas(self, bg=TRANSP_KEY,
+
+        # Main body: sidebar + right content column
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True)
+
+        # ── Sidebar ───────────────────────────────────────────────────────────
+        self._sidebar = ProfileLibrary(
+            body,
+            on_load=self._load_profile,
+            on_save_current=self._get_current_slot_data)
+        self._sidebar.pack(side="left", fill="y")
+
+        # vertical divider
+        tk.Frame(body, bg=BORDER, width=1).pack(side="left", fill="y")
+
+        # ── Right column: canvas + footer ─────────────────────────────────────
+        right = tk.Frame(body, bg=BG)
+        right.pack(side="left", fill="both", expand=True)
+        self._right = right
+
+        self.canvas = tk.Canvas(right, bg=TRANSP_KEY,
                                 highlightthickness=0, cursor="")
         self.canvas.pack(fill="both", expand=True)
 
@@ -456,24 +699,19 @@ class App(tk.Tk):
         self.canvas.bind("<B1-Motion>",       self._canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._canvas_release)
 
-        self._build_footer()
+        self._build_footer(right)
         self._draw_border()
 
     # ── title bar ─────────────────────────────────────────────────────────────
     def _build_titlebar(self):
-        cfg = _load_config()
         bar = tk.Frame(self, bg=PANEL, height=TITLE_H)
         bar.pack(fill="x", side="top")
         bar.pack_propagate(False)
         self._bar = bar
 
-        # thin accent line along the very top
         tk.Frame(bar, bg=ACCENT, height=2).place(x=0, y=0, relwidth=1)
 
-        # ── left side ─────────────────────────────────────────────────────────
-        # icon dot
-        dot_c = tk.Canvas(bar, bg=PANEL, width=10, height=10,
-                          highlightthickness=0)
+        dot_c = tk.Canvas(bar, bg=PANEL, width=10, height=10, highlightthickness=0)
         dot_c.create_oval(1,1,9,9, fill=ACCENT, outline="")
         dot_c.pack(side="left", padx=(14,4), pady=4)
 
@@ -481,12 +719,11 @@ class App(tk.Tk):
                              font=("Segoe UI", 10, "bold"))
         lbl_title.pack(side="left", padx=(0,2))
 
-        tk.Label(bar, text="Made By Ciri", bg=PANEL, fg="#2ecc71",
+        tk.Label(bar, text="Made By Ciri", bg=PANEL, fg=GREEN,
                  font=("Segoe UI", 7, "italic")).pack(side="left", padx=(0,6))
 
         tk.Frame(bar, bg=BORDER, width=1).pack(side="left", fill="y", pady=8)
 
-        # EDIT ZONES
         self.btn_edit = tk.Button(
             bar, text="EDIT ZONES", command=self._toggle_edit,
             bg=PANEL, fg=FG2, relief="flat", bd=0,
@@ -496,7 +733,6 @@ class App(tk.Tk):
 
         tk.Frame(bar, bg=BORDER, width=1).pack(side="left", fill="y", pady=8)
 
-        # START / STOP
         self.btn_run = tk.Button(
             bar, text="▶  START", command=self._toggle_run,
             bg=ACCENT, fg="white", relief="flat", bd=0,
@@ -506,19 +742,16 @@ class App(tk.Tk):
 
         tk.Frame(bar, bg=BORDER, width=1).pack(side="left", fill="y", pady=8)
 
-        # Timer readout
         self.lbl_timer = tk.Label(bar, text="--:--:--", bg=PANEL, fg=ACCENT,
                                   font=("Consolas", 14, "bold"))
         self.lbl_timer.pack(side="left", padx=12)
 
         tk.Frame(bar, bg=BORDER, width=1).pack(side="left", fill="y", pady=8)
 
-        # Status
         self.lbl_status = tk.Label(bar, text="Ready", bg=PANEL, fg=FG2,
                                    font=("Segoe UI", 8))
         self.lbl_status.pack(side="left", padx=8)
 
-        # ── right side ────────────────────────────────────────────────────────
         btn_close = tk.Button(
             bar, text="✕", command=self._on_close,
             bg=PANEL, fg=FG2, relief="flat", bd=0,
@@ -526,26 +759,23 @@ class App(tk.Tk):
             cursor="hand2", activebackground=RED, activeforeground="white")
         btn_close.pack(side="right", pady=8)
 
-        tk.Label(bar, text="right-click + drag to resize", bg=PANEL, fg="#2ecc71",
+        tk.Label(bar, text="right-click + drag to resize", bg=PANEL, fg=GREEN,
                  font=("Segoe UI", 7, "italic")).pack(side="right", padx=(0, 8))
 
-        # drag targets
         for w in [bar, lbl_title, dot_c, self.lbl_timer, self.lbl_status]:
             w.bind("<ButtonPress-1>",  self._drag_start)
             w.bind("<B1-Motion>",      self._drag_move)
             w.bind("<ButtonPress-3>",  self._resize_start)
             w.bind("<B3-Motion>",      self._resize_move)
 
-    # ── footer (slot cards) ───────────────────────────────────────────────────
-    def _build_footer(self):
-        foot = tk.Frame(self, bg=PANEL)
+    # ── footer ────────────────────────────────────────────────────────────────
+    def _build_footer(self, parent):
+        foot = tk.Frame(parent, bg=PANEL)
         foot.pack(fill="x", side="bottom")
         self._foot = foot
 
-        # top separator
         tk.Frame(foot, bg=BORDER, height=1).pack(fill="x")
 
-        # section label
         lbl_row = tk.Frame(foot, bg=PANEL)
         lbl_row.pack(fill="x", padx=10, pady=(5,2))
         tk.Label(lbl_row, text="CLICK TRIGGERS", bg=PANEL, fg=FG2,
@@ -565,6 +795,17 @@ class App(tk.Tk):
                              on_rows_changed=self._on_rows_changed)
             col.grid(row=0, column=i, sticky="nsew", padx=3)
             self._slots.append(col)
+
+    # ── profile callbacks ─────────────────────────────────────────────────────
+    def _get_current_slot_data(self):
+        return [s.get_times_data() for s in self._slots]
+
+    def _load_profile(self, slots_data):
+        for i, slot in enumerate(self._slots):
+            times = slots_data[i] if i < len(slots_data) else []
+            slot.set_times_data(times)
+        self._on_rows_changed()
+        self.lbl_status.config(text="Profile loaded")
 
     # ── border ────────────────────────────────────────────────────────────────
     def _draw_border(self):
@@ -594,11 +835,10 @@ class App(tk.Tk):
         self._rw = self.winfo_width(); self._rh = self.winfo_height()
 
     def _resize_move(self, e):
-        nw = max(700, self._rw + (e.x_root - self._rx))
+        nw = max(900, self._rw + (e.x_root - self._rx))
         nh = max(400, self._rh + (e.y_root - self._ry))
         self.geometry(f"{nw}x{nh}")
 
-    # ── canvas drag dispatch ──────────────────────────────────────────────────
     def _canvas_drag(self, e):
         for h in self._handles:
             if h._mode is not None:
@@ -633,32 +873,21 @@ class App(tk.Tk):
 
     # ── dynamic footer / window height ────────────────────────────────────────
     def _init_canvas_h(self):
-        """Snapshot the canvas height once after first layout — never recalculate."""
         self._canvas_h = self.canvas.winfo_height()
         if self._canvas_h < 10:
-            # Layout hasn't settled yet — retry
             self.after(100, self._init_canvas_h)
             return
         self._fit_window_height()
 
     def _on_rows_changed(self):
-        """Grow the window downward to fit trigger rows — never shrink canvas area."""
         self.after_idle(self._fit_window_height)
 
     def _fit_window_height(self):
-        """Resize only the bottom edge of the window to fit the tallest slot column."""
         if not self._canvas_h:
             return
-
-        # Fixed overhead inside the footer frame:
-        #   separator(1) + label-row(22) + pady-top(5) + inner-pady(6)
-        #   + per-slot header(26) + add-btn(22) + pady-bottom(4) = ~86
         FOOTER_FIXED = 86
         max_rows = max((len(s._time_rows) for s in self._slots), default=0)
         new_foot_h = FOOTER_FIXED + max_rows * ROW_H
-
-        # _canvas_h is set once in __init__ after the window is first drawn
-        # and never recalculated from winfo — so we never accidentally shrink.
         new_total = TITLE_H + self._canvas_h + new_foot_h
         x = self.winfo_x()
         y = self.winfo_y()
@@ -668,7 +897,11 @@ class App(tk.Tk):
     # ── persistence ───────────────────────────────────────────────────────────
     def _save_cfg(self):
         geom = f"{self.winfo_width()}x{self.winfo_height()}+{self.winfo_x()}+{self.winfo_y()}"
-        _save_config({"geometry": geom, "zones": self.zones})
+        cfg = _load_config()
+        cfg["geometry"] = geom
+        cfg["zones"]    = self.zones
+        _save_config(cfg)
+        self._sidebar.save_to_config()
 
     def _on_close(self):
         self._save_cfg()
@@ -676,9 +909,9 @@ class App(tk.Tk):
 
     # ── screen coords ─────────────────────────────────────────────────────────
     def _capture_rect(self):
-        return (self.winfo_rootx() + BORDER_W,
+        return (self.winfo_rootx() + SIDEBAR_W + BORDER_W,
                 self.winfo_rooty() + TITLE_H + BORDER_W,
-                self.winfo_width()         - 2*BORDER_W,
+                self.winfo_width() - SIDEBAR_W - 2*BORDER_W,
                 self.canvas.winfo_height() - 2*BORDER_W)
 
     def _abs_mss_zone(self, frac):
@@ -698,10 +931,7 @@ class App(tk.Tk):
     def _parse_time(text):
         m = re.search(r"(\d{1,2}):(\d{2}):(\d{2})", text)
         if m:
-            mm = int(m.group(1))
-            ss = int(m.group(2))
-            # Units digit of centiseconds updates faster than OCR can capture —
-            # only the tens digit is reliable (e.g. "31" → treat as 30).
+            mm = int(m.group(1)); ss = int(m.group(2))
             cs_tens = (int(m.group(3)) // 10) * 10
             return mm*6000 + ss*100 + cs_tens
         m = re.search(r"(\d{1,2}):(\d{2})", text)
@@ -710,32 +940,23 @@ class App(tk.Tk):
         return None
 
     def _preprocess_images(self, rgb):
-        """Return the 2 most reliable image variants for OCR."""
         r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
-
-        # Strategy A — white pixel isolation (best for coloured/flashing BG)
         brightness  = r.astype(np.uint16) + g + b
         color_range = (np.maximum(np.maximum(r,g),b).astype(np.int16) -
                        np.minimum(np.minimum(r,g),b))
         white_mask = ((brightness > 570) & (color_range < 40)).astype(np.uint8) * 255
-        wm = cv2.resize(white_mask,
-                        (white_mask.shape[1]*4, white_mask.shape[0]*4),
+        wm = cv2.resize(white_mask, (white_mask.shape[1]*4, white_mask.shape[0]*4),
                         interpolation=cv2.INTER_NEAREST)
         wm = cv2.dilate(wm, np.ones((2,2), np.uint8), iterations=1)
         wm_inv = cv2.bitwise_not(wm)
-
-        # Strategy B — inverted greyscale threshold (fast fallback)
         grey    = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         grey_up = cv2.resize(grey, (grey.shape[1]*4, grey.shape[0]*4),
                              interpolation=cv2.INTER_LANCZOS4)
         _, b_fixed = cv2.threshold(grey_up, 160, 255, cv2.THRESH_BINARY)
-
-        # Only 2 strategies — fastest path with best coverage
         return [wm_inv, cv2.bitwise_not(b_fixed)]
 
     @staticmethod
     def _ocr_one(arr):
-        """Run Tesseract on a single image array. Returns (value, confidence)."""
         cfg = "--psm 7 -c tessedit_char_whitelist=0123456789:"
         try:
             data = pytesseract.image_to_data(
@@ -753,31 +974,23 @@ class App(tk.Tk):
 
     def _read_timer(self):
         zone = self._abs_mss_zone(self.zones[0])
-        # Reuse the shared mss instance (created in _loop) to avoid
-        # open/close overhead on every read; _sct is set by the reader thread
-        if not self._sct:
-            return None
+        if not self._sct: return None
         shot = self._sct.grab(zone)
         rgb = np.array(Image.frombytes("RGB", shot.size, shot.rgb))
         images = self._preprocess_images(rgb)
-
-        # Run only the 2 best strategies in parallel
         results = [None] * len(images)
         def _run(idx, arr):
             text, conf = self._ocr_one(arr)
             if text:
                 val = self._parse_time(text)
                 results[idx] = (val, conf)
-
         threads = [threading.Thread(target=_run, args=(i, arr), daemon=True)
                    for i, arr in enumerate(images)]
         for t in threads: t.start()
         for t in threads: t.join(timeout=0.25)
-
         scored = [(val, conf) for val, conf in results
                   if val is not None and conf is not None]
         if not scored: return None
-
         tally = {}
         for val, conf in scored:
             tally[val] = tally.get(val, 0) + conf
@@ -794,26 +1007,20 @@ class App(tk.Tk):
             self.running = True
             self.fired.clear()
             self._read_in_flight = False
-            # Pre-warm a pool of click workers — each sits idle on an Event,
-            # fires the moment it's set.  Zero thread-spawn latency at click time.
             self._click_queue = []
             for _ in range(5):
                 ev = threading.Event()
                 slot_holder = [None]
                 def _worker(event=ev, holder=slot_holder):
                     while True:
-                        event.wait()
-                        event.clear()
+                        event.wait(); event.clear()
                         zi = holder[0]
-                        if zi is None:
-                            break
+                        if zi is None: break
                         pt = self._slot_center(zi)
-                        if pt:
-                            pyautogui.click(*pt)
+                        if pt: pyautogui.click(*pt)
                 self._click_queue.append((ev, slot_holder,
                     threading.Thread(target=_worker, daemon=True)))
-            for _, _, t in self._click_queue:
-                t.start()
+            for _, _, t in self._click_queue: t.start()
             self.btn_run.config(text="■  STOP", bg=RED,
                                 activebackground="#c0392b")
             self.lbl_status.config(text="Running…")
@@ -827,41 +1034,20 @@ class App(tk.Tk):
         return pairs
 
     def _loop(self):
-        """
-        Decoupled read/fire loop with wall-clock interpolation + freeze detection
-        + auto-stop on lost signal.
-
-        Freeze detection: 3+ identical OCR reads = game timer paused (ult anim).
-        Interpolator holds still. Resumes the instant OCR sees a new value.
-
-        Auto-stop: if OCR returns None for 4 consecutive seconds (loading
-        screen, between raids) the loop stops itself and resets UI to Ready.
-        """
-        # Fire FIRE_OFFSET_CS hundredths-of-a-second before the exact typed
-        # value, to compensate the measured end-to-end click latency
-        # (OCR -> decision -> worker thread -> pyautogui). Tune in small
-        # steps if you measure a different consistent lag.
         FIRE_OFFSET_CS = 17
-        FREEZE_READS   = 3     # identical reads before declaring freeze
-
+        FREEZE_READS   = 3
         triggers = self._collect_triggers()
         self._read_lock = threading.Lock()
         self._sct       = None
-
         self._anchor_cs   = None
         self._anchor_wall = None
         self._frozen      = False
-        self._has_signal  = False  # True when OCR is actively reading numbers
+        self._has_signal  = False
 
         def _reader():
-            prev_cs           = None
-            repeat_count      = 0
-            signal_was_lost   = True   # True until we get a first good reading
-            reset_candidate   = None   # value seen once during a big jump-up
-            reset_candidate_n = 0
-            regain_candidate  = None   # value seen once while reacquiring signal
-            regain_candidate_n = 0
-
+            prev_cs = None; repeat_count = 0; signal_was_lost = True
+            reset_candidate = None; reset_candidate_n = 0
+            regain_candidate = None; regain_candidate_n = 0
             with mss.mss() as sct:
                 self._sct = sct
                 while self.running:
@@ -869,147 +1055,82 @@ class App(tk.Tk):
                         cs = self._read_timer()
                         if cs is not None:
                             if signal_was_lost:
-                                # Signal was lost — don't trust a single read,
-                                # since a stray OCR misread on a blank/changed
-                                # screen could fake a "regain" with garbage and
-                                # resume the countdown from nonsense. Require
-                                # two consistent reads before resyncing.
                                 if regain_candidate is not None and abs(cs - regain_candidate) <= 50:
                                     regain_candidate_n += 1
                                 else:
-                                    regain_candidate   = cs
-                                    regain_candidate_n = 1
-
-                                if regain_candidate_n < 2:
-                                    continue
-                                # Confirmed — a fresh timer has appeared after
-                                # a real dropout (almost always a new run/raid
-                                # starting). Re-arm all triggers so they can
-                                # fire again on this new countdown.
+                                    regain_candidate = cs; regain_candidate_n = 1
+                                if regain_candidate_n < 2: continue
                                 self.fired.clear()
-                                regain_candidate   = None
-                                regain_candidate_n = 0
-
+                                regain_candidate = None; regain_candidate_n = 0
                             elif prev_cs is not None and abs(cs - prev_cs) > 500:
-                                # Large jump while signal was already locked on.
-                                # Could be a single-frame OCR misread, OR the
-                                # in-game timer genuinely restarting (new round).
-                                # Require the same jumped-to value to repeat
-                                # before trusting it, to filter out noise.
                                 if cs > prev_cs:
                                     if reset_candidate is not None and abs(cs - reset_candidate) <= 50:
                                         reset_candidate_n += 1
                                     else:
-                                        reset_candidate   = cs
-                                        reset_candidate_n = 1
-
+                                        reset_candidate = cs; reset_candidate_n = 1
                                     if reset_candidate_n >= 2:
-                                        # Confirmed genuine reset — re-arm all
-                                        # triggers for the new countdown.
                                         self.fired.clear()
-                                        reset_candidate   = None
-                                        reset_candidate_n = 0
-                                    else:
-                                        continue
-                                else:
-                                    # Jump downward this large is almost
-                                    # certainly OCR noise — ignore it.
-                                    continue
+                                        reset_candidate = None; reset_candidate_n = 0
+                                    else: continue
+                                else: continue
                             else:
-                                reset_candidate   = None
-                                reset_candidate_n = 0
-
-                            # If we just regained signal after a confirmed
-                            # dropout, accept this reading as the new anchor
-                            # (resync) instead of comparing it against a
-                            # now-stale prev_cs.
+                                reset_candidate = None; reset_candidate_n = 0
                             signal_was_lost = False
                             now = time.perf_counter()
-
                             if cs == prev_cs:
                                 repeat_count += 1
                             else:
                                 repeat_count = 0
                                 with self._read_lock:
-                                    self._anchor_cs   = cs
-                                    self._anchor_wall = now
-                                    self._frozen      = False
-                                    self._has_signal  = True
+                                    self._anchor_cs = cs; self._anchor_wall = now
+                                    self._frozen = False; self._has_signal = True
                                 prev_cs = cs
-
                             if repeat_count >= FREEZE_READS:
                                 with self._read_lock:
                                     if not self._frozen:
-                                        self._anchor_cs   = cs
-                                        self._anchor_wall = now
-                                        self._frozen      = True
+                                        self._anchor_cs = cs; self._anchor_wall = now
+                                        self._frozen = True
                             elif 0 < repeat_count < FREEZE_READS:
                                 with self._read_lock:
                                     if not self._frozen:
-                                        self._anchor_cs   = cs
-                                        self._anchor_wall = now
+                                        self._anchor_cs = cs; self._anchor_wall = now
                         else:
-                            # No number read — signal lost instantly
-                            signal_was_lost     = True
-                            prev_cs              = None
-                            repeat_count         = 0
-                            reset_candidate      = None
-                            reset_candidate_n    = 0
-                            regain_candidate     = None
-                            regain_candidate_n   = 0
+                            signal_was_lost = True; prev_cs = None; repeat_count = 0
+                            reset_candidate = None; reset_candidate_n = 0
+                            regain_candidate = None; regain_candidate_n = 0
                             with self._read_lock:
                                 self._has_signal = False
-
-                    except Exception:
-                        pass
+                    except Exception: pass
 
         reader_thread = threading.Thread(target=_reader, daemon=True)
         reader_thread.start()
-
         time.sleep(0.15)
 
-        last_ui_update     = 0.0
-        UI_UPDATE_INTERVAL = 0.04   # 25Hz — plenty smooth for a human-readable
-                                    # label; the fire-check below still runs
-                                    # at full speed regardless of this
+        last_ui_update = 0.0
+        UI_UPDATE_INTERVAL = 0.04
         last_shown_no_signal = False
 
         while self.running:
             try:
                 with self._read_lock:
-                    anchor_cs   = self._anchor_cs
-                    anchor_wall = self._anchor_wall
-                    frozen      = self._frozen
-                    has_signal  = self._has_signal
-
+                    anchor_cs = self._anchor_cs; anchor_wall = self._anchor_wall
+                    frozen = self._frozen; has_signal = self._has_signal
                 now_wall = time.perf_counter()
                 due_ui   = (now_wall - last_ui_update) >= UI_UPDATE_INTERVAL
-
                 if not has_signal:
-                    # Lost OCR signal — clear display immediately (not throttled,
-                    # so the clear is never delayed/eaten), keep running.
                     if not last_shown_no_signal:
                         self.lbl_timer.config(text="??:??:??")
-                        last_shown_no_signal = True
-                        last_ui_update = now_wall
+                        last_shown_no_signal = True; last_ui_update = now_wall
                 elif anchor_cs is not None:
                     last_shown_no_signal = False
-
                     if frozen:
                         cs = anchor_cs
                     else:
                         elapsed_cs = int((now_wall - anchor_wall) * 100)
                         cs = max(0, anchor_cs - elapsed_cs)
-
-                    # Display label only needs to repaint ~25x/sec — throttling
-                    # this keeps the tight loop below from hammering the Tk
-                    # widget (which isn't thread-safe) on every 5ms tick.
                     if due_ui:
                         self.lbl_timer.config(text=_cs_to_str(cs))
                         last_ui_update = now_wall
-
-                    # Fire check always runs at full loop speed (every tick),
-                    # independent of the UI throttle above, for precise timing.
                     for (zi, trig) in triggers:
                         key = (zi, trig)
                         if key not in self.fired:
@@ -1018,24 +1139,16 @@ class App(tk.Tk):
                                 self.lbl_status.config(
                                     text=f"Slot {zi}  fired at  {_cs_to_str(cs)}")
                                 self._click_slot(zi)
-
             except Exception as ex:
                 self.lbl_status.config(text=f"Err: {str(ex)[:60]}")
-
-            time.sleep(0.005)  # 200Hz fire-check tick — display label is
-                               # throttled separately above to stay Tk-safe
+            time.sleep(0.005)
 
     def _click_slot(self, zi):
-        # Use next available pre-warmed worker — no thread spawn cost
         for ev, holder, _ in self._click_queue:
             if not ev.is_set():
-                holder[0] = zi
-                ev.set()
-                return
-        # Fallback: all workers busy, spawn one (rare)
+                holder[0] = zi; ev.set(); return
         pt = self._slot_center(zi)
-        if pt:
-            pyautogui.click(*pt)
+        if pt: pyautogui.click(*pt)
 
 
 if __name__ == "__main__":
