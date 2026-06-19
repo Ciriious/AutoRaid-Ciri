@@ -11,22 +11,10 @@ and auto-clicks the character buttons at the right moments.
 ```
 pip install mss pytesseract pillow pyautogui opencv-python numpy
 ```
-
-### 2. Install Tesseract OCR
-| OS | Command |
-|----|---------|
-| Windows | Download from https://github.com/UB-Mannheim/tesseract/wiki and install to default path |
-| macOS | `brew install tesseract` |
-| Linux | `sudo apt install tesseract-ocr` |
-
-> **Windows only:** If Tesseract isn't on your PATH, add this line near the top of the script:
-> ```python
-> pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-> ```
-
-### 3. Run
+### 2. Run
 ```
-python game_overlay.py
+python AutoRaid.pyw
+
 ```
 
 ---
