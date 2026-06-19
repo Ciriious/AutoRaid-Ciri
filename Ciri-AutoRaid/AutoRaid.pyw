@@ -26,6 +26,22 @@ except ImportError as e:
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE    = 0.0
 
+# ── suppress tesseract's flashing console window on Windows ───────────────────
+# pytesseract shells out to tesseract.exe for every OCR call. On Windows, every
+# subprocess launch of a console exe briefly flashes a console window unless we
+# explicitly tell it to start hidden. This patches subprocess.Popen globally
+# (safe — only affects window visibility, not behaviour) so those popups stop.
+if os.name == "nt":
+    import subprocess as _subprocess
+    _orig_popen_init = _subprocess.Popen.__init__
+    def _hidden_popen_init(self, *args, **kwargs):
+        si = kwargs.get("startupinfo") or _subprocess.STARTUPINFO()
+        si.dwFlags |= _subprocess.STARTF_USESHOWWINDOW
+        kwargs["startupinfo"] = si
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | _subprocess.CREATE_NO_WINDOW
+        _orig_popen_init(self, *args, **kwargs)
+    _subprocess.Popen.__init__ = _hidden_popen_init
+
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _LOCAL_TESS = os.path.join(_SCRIPT_DIR, "tesseract.exe")
 if os.path.isfile(_LOCAL_TESS):
@@ -464,7 +480,13 @@ class ProfileLibrary(tk.Frame):
     def _load_from_config(self):
         cfg = _load_config()
         self._profiles = cfg.get("profiles", [])
+        idx = cfg.get("selected_profile_idx")
+        if isinstance(idx, int) and 0 <= idx < len(self._profiles):
+            self._selected_idx = idx
         self._refresh_list()
+
+    def get_selected_idx(self):
+        return self._selected_idx
 
     def save_to_config(self):
         cfg = _load_config()
@@ -628,7 +650,12 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._canvas_h = None
         self.after(150, self._init_canvas_h)
-        self.after(200, self._show_disclaimer)
+        self.after(200, self._maybe_show_disclaimer)
+
+    def _maybe_show_disclaimer(self):
+        cfg = _load_config()
+        if not cfg.get("disclaimer_dismissed", False):
+            self._show_disclaimer()
 
     # ── disclaimer ────────────────────────────────────────────────────────────
     def _show_disclaimer(self):
@@ -653,6 +680,9 @@ class App(tk.Tk):
                  bg="#7b0e0e", fg="#cc8888", font=("Segoe UI", 7), anchor="w").pack(fill="x")
 
         def _dismiss():
+            cfg = _load_config()
+            cfg["disclaimer_dismissed"] = True
+            _save_config(cfg)
             banner.place_forget(); banner.destroy()
 
         tk.Button(banner, text="✕", command=_dismiss,
@@ -788,11 +818,18 @@ class App(tk.Tk):
         for i in range(5):
             inner.columnconfigure(i, weight=1)
 
+        cfg = _load_config()
+        saved_slots    = cfg.get("current_slots", [])
+        saved_enabled  = cfg.get("current_enabled", [])
+
         self._slots = []
         for i in range(5):
-            init = DEFAULT_SLOT_TIMES[i] if i < len(DEFAULT_SLOT_TIMES) else []
+            init = saved_slots[i] if i < len(saved_slots) else (
+                DEFAULT_SLOT_TIMES[i] if i < len(DEFAULT_SLOT_TIMES) else [])
             col = SlotColumn(inner, i, SLOT_COLS[i], init,
                              on_rows_changed=self._on_rows_changed)
+            if i < len(saved_enabled):
+                col.en_var.set(bool(saved_enabled[i]))
             col.grid(row=0, column=i, sticky="nsew", padx=3)
             self._slots.append(col)
 
@@ -898,8 +935,11 @@ class App(tk.Tk):
     def _save_cfg(self):
         geom = f"{self.winfo_width()}x{self.winfo_height()}+{self.winfo_x()}+{self.winfo_y()}"
         cfg = _load_config()
-        cfg["geometry"] = geom
-        cfg["zones"]    = self.zones
+        cfg["geometry"]            = geom
+        cfg["zones"]               = self.zones
+        cfg["current_slots"]       = self._get_current_slot_data()
+        cfg["current_enabled"]     = [s.en_var.get() for s in self._slots]
+        cfg["selected_profile_idx"] = self._sidebar.get_selected_idx()
         _save_config(cfg)
         self._sidebar.save_to_config()
 
@@ -931,9 +971,8 @@ class App(tk.Tk):
     def _parse_time(text):
         m = re.search(r"(\d{1,2}):(\d{2}):(\d{2})", text)
         if m:
-            mm = int(m.group(1)); ss = int(m.group(2))
-            cs_tens = (int(m.group(3)) // 10) * 10
-            return mm*6000 + ss*100 + cs_tens
+            mm = int(m.group(1)); ss = int(m.group(2)); cs = int(m.group(3))
+            return mm*6000 + ss*100 + cs
         m = re.search(r"(\d{1,2}):(\d{2})", text)
         if m:
             return int(m.group(1))*6000 + int(m.group(2))*100
@@ -991,10 +1030,20 @@ class App(tk.Tk):
         scored = [(val, conf) for val, conf in results
                   if val is not None and conf is not None]
         if not scored: return None
-        tally = {}
+        tally_conf  = {}
+        tally_votes = {}
         for val, conf in scored:
-            tally[val] = tally.get(val, 0) + conf
-        return max(tally, key=tally.get)
+            tally_conf[val]  = tally_conf.get(val, 0) + conf
+            tally_votes[val] = tally_votes.get(val, 0) + 1
+        # Prefer a value two variants agree on over one with higher raw confidence.
+        # This stops a single garbled read (e.g. 4→8) winning on confidence alone.
+        best_val   = max(tally_conf, key=tally_conf.get)
+        max_votes  = max(tally_votes.values())
+        if tally_votes[best_val] < max_votes:
+            candidates = {v: c for v, c in tally_conf.items()
+                          if tally_votes[v] == max_votes}
+            best_val = max(candidates, key=candidates.get)
+        return best_val
 
     # ── run / loop ────────────────────────────────────────────────────────────
     def _toggle_run(self):
@@ -1034,7 +1083,7 @@ class App(tk.Tk):
         return pairs
 
     def _loop(self):
-        FIRE_OFFSET_CS = 17
+        FIRE_OFFSET_CS = 23
         FREEZE_READS   = 3
         triggers = self._collect_triggers()
         self._read_lock = threading.Lock()
@@ -1048,6 +1097,7 @@ class App(tk.Tk):
             prev_cs = None; repeat_count = 0; signal_was_lost = True
             reset_candidate = None; reset_candidate_n = 0
             regain_candidate = None; regain_candidate_n = 0
+            drift_candidate = None; drift_candidate_n = 0
             with mss.mss() as sct:
                 self._sct = sct
                 while self.running:
@@ -1059,7 +1109,7 @@ class App(tk.Tk):
                                     regain_candidate_n += 1
                                 else:
                                     regain_candidate = cs; regain_candidate_n = 1
-                                if regain_candidate_n < 2: continue
+                                if regain_candidate_n < 3: continue
                                 self.fired.clear()
                                 regain_candidate = None; regain_candidate_n = 0
                             elif prev_cs is not None and abs(cs - prev_cs) > 500:
@@ -1068,13 +1118,36 @@ class App(tk.Tk):
                                         reset_candidate_n += 1
                                     else:
                                         reset_candidate = cs; reset_candidate_n = 1
-                                    if reset_candidate_n >= 2:
+                                    if reset_candidate_n >= 3:
                                         self.fired.clear()
                                         reset_candidate = None; reset_candidate_n = 0
                                     else: continue
                                 else: continue
                             else:
                                 reset_candidate = None; reset_candidate_n = 0
+                                # Small-deviation guard: a single garbled OCR read can
+                                # be off by a second or two without tripping the big-jump
+                                # check above. Cross-check against where the countdown
+                                # should be (extrapolated from the current anchor) and
+                                # require a second confirming read before trusting an
+                                # outlier as the new anchor — this is what was causing
+                                # the timer to desync at random moments.
+                                if self._anchor_cs is not None and self._anchor_wall is not None:
+                                    expected = self._anchor_cs - int(
+                                        (time.perf_counter() - self._anchor_wall) * 100)
+                                    deviation = abs(cs - expected)
+                                else:
+                                    deviation = 0
+                                if deviation > 25:
+                                    if drift_candidate is not None and abs(cs - drift_candidate) <= 10:
+                                        drift_candidate_n += 1
+                                    else:
+                                        drift_candidate = cs; drift_candidate_n = 1
+                                    if drift_candidate_n < 2:
+                                        continue
+                                    drift_candidate = None; drift_candidate_n = 0
+                                else:
+                                    drift_candidate = None; drift_candidate_n = 0
                             signal_was_lost = False
                             now = time.perf_counter()
                             if cs == prev_cs:
@@ -1124,8 +1197,22 @@ class App(tk.Tk):
                 elif anchor_cs is not None:
                     last_shown_no_signal = False
                     if frozen:
+                        # Game timer is paused (ult/cutscene) — hold value exactly,
+                        # and explicitly resync to the OCR'd value every time so any
+                        # drift can't accumulate while paused.
                         cs = anchor_cs
+                        self._prev_frozen = True
                     else:
+                        if getattr(self, '_prev_frozen', False):
+                            # Timer just resumed: anchor_wall is from when the freeze
+                            # started, so elapsed would include the entire freeze
+                            # duration and jump the timer far ahead. Reset anchor_wall
+                            # to now so we count from the correct resumed position.
+                            with self._read_lock:
+                                self._anchor_wall = now_wall
+                                anchor_wall = now_wall
+                            self._prev_frozen = False
+                        _prev_frozen = False
                         elapsed_cs = int((now_wall - anchor_wall) * 100)
                         cs = max(0, anchor_cs - elapsed_cs)
                     if due_ui:
