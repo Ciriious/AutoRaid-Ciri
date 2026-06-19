@@ -363,6 +363,55 @@ class App(tk.Tk):
         self.after(300, lambda: _make_layered(
             ctypes.windll.user32.GetForegroundWindow()))
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(200, self._show_disclaimer)
+
+    # ── disclaimer banner ─────────────────────────────────────────────────────
+    def _show_disclaimer(self):
+        """Red banner overlay with accuracy warning — dismissible via ✕ button."""
+        banner = tk.Frame(self, bg="#7b0e0e", bd=0)
+        banner.place(relx=0, rely=0, relwidth=1, anchor="nw",
+                     y=TITLE_H)   # sit flush below the title bar
+
+        # left red accent stripe
+        tk.Frame(banner, bg="#e74c3c", width=4).pack(side="left", fill="y")
+
+        # icon
+        tk.Label(banner, text="⚠", bg="#7b0e0e", fg="#ffb3b3",
+                 font=("Segoe UI", 11, "bold")).pack(side="left", padx=(8, 4), pady=6)
+
+        # message block
+        msg_frame = tk.Frame(banner, bg="#7b0e0e")
+        msg_frame.pack(side="left", fill="both", expand=True, pady=6)
+
+        tk.Label(msg_frame,
+                 text="ACCURACY DISCLAIMER — Click timings are approximate.",
+                 bg="#7b0e0e", fg="#ffe0e0",
+                 font=("Segoe UI", 8, "bold"),
+                 anchor="w").pack(fill="x")
+
+        tk.Label(msg_frame,
+                 text="Expected range per trigger:  +0.05 s  |  +0.03 s  |  Exact  |  −0.01 s  |  −0.03 s",
+                 bg="#7b0e0e", fg="#ffb3b3",
+                 font=("Segoe UI", 7),
+                 anchor="w").pack(fill="x")
+
+        tk.Label(msg_frame,
+                 text="OCR latency, system load, and game framerate all affect precision. Fine-tune your trigger times if needed.",
+                 bg="#7b0e0e", fg="#cc8888",
+                 font=("Segoe UI", 7),
+                 anchor="w").pack(fill="x")
+
+        # close button
+        def _dismiss():
+            banner.place_forget()
+            banner.destroy()
+
+        tk.Button(banner, text="✕", command=_dismiss,
+                  bg="#7b0e0e", fg="#ffb3b3", relief="flat", bd=0,
+                  font=("Segoe UI", 10, "bold"), padx=10,
+                  cursor="hand2",
+                  activebackground="#9b1a1a",
+                  activeforeground="white").pack(side="right", padx=(0, 6), pady=4)
 
     # ── build ─────────────────────────────────────────────────────────────────
     def _build(self):
