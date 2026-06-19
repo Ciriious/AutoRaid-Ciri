@@ -64,9 +64,11 @@ TRANSP_KEY = "#010203"    # colour-key for window transparency
 SLOT_COLS  = ["#c8a0ff", "#f0a500", "#e74c3c", "#4d96ff", "#2ecc71"]
 ZONE_COLS  = [ACCENT] + SLOT_COLS   # index 0 = timer zone
 
-TITLE_H  = 44
-FOOTER_H = 140
-BORDER_W = 1
+TITLE_H      = 44
+FOOTER_H_MIN = 90    # height with 0 rows (header + add-btn only)
+ROW_H        = 22    # height of each time row
+FOOTER_PAD   = 50    # fixed vertical padding around rows inside footer
+BORDER_W     = 1
 
 # Slots start with no rows by default — user adds rows via "+ ADD TIME"
 DEFAULT_SLOT_TIMES = [[]] * 5
@@ -198,12 +200,13 @@ class ZoneHandle:
 class SlotColumn(tk.Frame):
     """One slot card.  Times stored/displayed as 'MM:SS:cs' strings."""
 
-    def __init__(self, parent, slot_idx, colour, initial_times):
+    def __init__(self, parent, slot_idx, colour, initial_times, on_rows_changed=None):
         super().__init__(parent, bg=PANEL2, bd=0,
                          highlightbackground=colour, highlightthickness=1)
-        self.slot_idx   = slot_idx
-        self.colour     = colour
-        self._time_rows = []
+        self.slot_idx         = slot_idx
+        self.colour           = colour
+        self._time_rows       = []
+        self._on_rows_changed = on_rows_changed
 
         # ── header ────────────────────────────────────────────────────────────
         hdr = tk.Frame(self, bg=PANEL2)
@@ -234,18 +237,31 @@ class SlotColumn(tk.Frame):
         self.list_frame.pack(fill="both", expand=True, padx=4)
 
         # ── add button ────────────────────────────────────────────────────────
-        add_btn = tk.Frame(self, bg=PANEL2)
-        add_btn.pack(fill="x", padx=4, pady=(1,4))
-        tk.Button(add_btn, text="+ ADD TIME", command=self._add_row,
+        add_btn_frame = tk.Frame(self, bg=PANEL2)
+        add_btn_frame.pack(fill="x", padx=4, pady=(1,4))
+        self._add_btn = tk.Button(add_btn_frame, text="+ ADD TIME", command=self._add_row,
                   bg=PANEL, fg=colour, relief="flat", bd=0,
                   font=("Segoe UI", 7, "bold"), cursor="hand2",
                   pady=2, activebackground=BORDER_HI,
-                  activeforeground=colour).pack(fill="x")
+                  activeforeground=colour)
+        self._add_btn.pack(fill="x")
 
         for t in initial_times:
             self._add_row(t)
 
+    MAX_ROWS = 3
+
+    def _update_add_btn(self):
+        if len(self._time_rows) >= self.MAX_ROWS:
+            self._add_btn.config(state="disabled", fg=FG3, cursor="",
+                                 text="MAX 3 TIMES")
+        else:
+            self._add_btn.config(state="normal", fg=self.colour, cursor="hand2",
+                                 text="+ ADD TIME")
+
     def _add_row(self, initial_text=""):
+        if len(self._time_rows) >= self.MAX_ROWS:
+            return
         row = tk.Frame(self.list_frame, bg=PANEL2)
         row.pack(fill="x", pady=1)
 
@@ -317,6 +333,9 @@ class SlotColumn(tk.Frame):
         def remove(en=entry, r=row):
             self._time_rows.remove(en)
             r.destroy()
+            self._update_add_btn()
+            if self._on_rows_changed:
+                self._on_rows_changed()
 
         tk.Button(row, text="×", command=remove,
                   bg=PANEL2, fg=FG3, relief="flat",
@@ -325,6 +344,9 @@ class SlotColumn(tk.Frame):
                   activebackground=PANEL2).pack(side="left")
 
         self._time_rows.append(entry)
+        self._update_add_btn()
+        if self._on_rows_changed:
+            self._on_rows_changed()
 
     def get_triggers(self):
         if not self.en_var.get(): return []
@@ -350,12 +372,12 @@ class App(tk.Tk):
 
         cfg = _load_config()
         self.geometry(cfg.get("geometry", "1100x660+60+60"))
-        self.zones     = cfg.get("zones", _default_zones())
-        self.running   = False
-        self.edit_mode = False
-        self.fired     = set()
-        self._handles  = []
-        self._slots    = []
+        self.zones      = cfg.get("zones", _default_zones())
+        self.running    = False
+        self.edit_mode  = False
+        self.fired      = set()
+        self._handles   = []
+        self._slots     = []
 
         self._build()
         self.attributes("-transparentcolor", TRANSP_KEY)
@@ -363,6 +385,9 @@ class App(tk.Tk):
         self.after(300, lambda: _make_layered(
             ctypes.windll.user32.GetForegroundWindow()))
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Capture the canvas height once after layout settles, then size footer
+        self._canvas_h = None
+        self.after(150, self._init_canvas_h)
         self.after(200, self._show_disclaimer)
 
     # ── disclaimer banner ─────────────────────────────────────────────────────
@@ -456,6 +481,9 @@ class App(tk.Tk):
                              font=("Segoe UI", 10, "bold"))
         lbl_title.pack(side="left", padx=(0,2))
 
+        tk.Label(bar, text="Made By Ciri", bg=PANEL, fg="#2ecc71",
+                 font=("Segoe UI", 7, "italic")).pack(side="left", padx=(0,6))
+
         tk.Frame(bar, bg=BORDER, width=1).pack(side="left", fill="y", pady=8)
 
         # EDIT ZONES
@@ -498,6 +526,9 @@ class App(tk.Tk):
             cursor="hand2", activebackground=RED, activeforeground="white")
         btn_close.pack(side="right", pady=8)
 
+        tk.Label(bar, text="right-click + drag to resize", bg=PANEL, fg="#2ecc71",
+                 font=("Segoe UI", 7, "italic")).pack(side="right", padx=(0, 8))
+
         # drag targets
         for w in [bar, lbl_title, dot_c, self.lbl_timer, self.lbl_status]:
             w.bind("<ButtonPress-1>",  self._drag_start)
@@ -507,9 +538,8 @@ class App(tk.Tk):
 
     # ── footer (slot cards) ───────────────────────────────────────────────────
     def _build_footer(self):
-        foot = tk.Frame(self, bg=PANEL, height=FOOTER_H)
+        foot = tk.Frame(self, bg=PANEL)
         foot.pack(fill="x", side="bottom")
-        foot.pack_propagate(False)
         self._foot = foot
 
         # top separator
@@ -531,7 +561,8 @@ class App(tk.Tk):
         self._slots = []
         for i in range(5):
             init = DEFAULT_SLOT_TIMES[i] if i < len(DEFAULT_SLOT_TIMES) else []
-            col = SlotColumn(inner, i, SLOT_COLS[i], init)
+            col = SlotColumn(inner, i, SLOT_COLS[i], init,
+                             on_rows_changed=self._on_rows_changed)
             col.grid(row=0, column=i, sticky="nsew", padx=3)
             self._slots.append(col)
 
@@ -599,6 +630,40 @@ class App(tk.Tk):
         while len(self.zones) <= idx:
             self.zones.append([0.0,0.0,0.1,0.1])
         self.zones[idx] = list(fracs)
+
+    # ── dynamic footer / window height ────────────────────────────────────────
+    def _init_canvas_h(self):
+        """Snapshot the canvas height once after first layout — never recalculate."""
+        self._canvas_h = self.canvas.winfo_height()
+        if self._canvas_h < 10:
+            # Layout hasn't settled yet — retry
+            self.after(100, self._init_canvas_h)
+            return
+        self._fit_window_height()
+
+    def _on_rows_changed(self):
+        """Grow the window downward to fit trigger rows — never shrink canvas area."""
+        self.after_idle(self._fit_window_height)
+
+    def _fit_window_height(self):
+        """Resize only the bottom edge of the window to fit the tallest slot column."""
+        if not self._canvas_h:
+            return
+
+        # Fixed overhead inside the footer frame:
+        #   separator(1) + label-row(22) + pady-top(5) + inner-pady(6)
+        #   + per-slot header(26) + add-btn(22) + pady-bottom(4) = ~86
+        FOOTER_FIXED = 86
+        max_rows = max((len(s._time_rows) for s in self._slots), default=0)
+        new_foot_h = FOOTER_FIXED + max_rows * ROW_H
+
+        # _canvas_h is set once in __init__ after the window is first drawn
+        # and never recalculated from winfo — so we never accidentally shrink.
+        new_total = TITLE_H + self._canvas_h + new_foot_h
+        x = self.winfo_x()
+        y = self.winfo_y()
+        w = self.winfo_width()
+        self.geometry(f"{w}x{new_total}+{x}+{y}")
 
     # ── persistence ───────────────────────────────────────────────────────────
     def _save_cfg(self):
