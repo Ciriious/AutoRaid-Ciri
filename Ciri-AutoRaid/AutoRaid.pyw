@@ -1083,7 +1083,7 @@ class App(tk.Tk):
         return pairs
 
     def _loop(self):
-        FIRE_OFFSET_CS = 22
+        FIRE_OFFSET_CS = 24
         FREEZE_READS   = 3
         triggers = self._collect_triggers()
         self._read_lock = threading.Lock()
