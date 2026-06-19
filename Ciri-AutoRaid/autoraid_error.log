@@ -1,0 +1,28 @@
+Traceback (most recent call last):
+  File "C:\Users\Tyler\Desktop\Ciri-AutoRaid\game_overlay.pyw", line 641, in <module>
+    App().mainloop()
+    ~~~^^
+  File "C:\Users\Tyler\Desktop\Ciri-AutoRaid\game_overlay.pyw", line 309, in __init__
+    self._build()
+    ~~~~~~~~~~~^^
+  File "C:\Users\Tyler\Desktop\Ciri-AutoRaid\game_overlay.pyw", line 334, in _build
+    self._build_footer()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Tyler\Desktop\Ciri-AutoRaid\game_overlay.pyw", line 434, in _build_footer
+    col = SlotColumn(inner, i, SLOT_COLS[i], init)
+  File "C:\Users\Tyler\Desktop\Ciri-AutoRaid\game_overlay.pyw", line 221, in __init__
+    tk.Label(hdr, text=f"SLOT  {slot_idx+1}", bg=PANEL2, fg=FG,
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             font=("Segoe UI", 7, "bold"), lettersp=2 if hasattr(tk.Label,'lettersp') else 0
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             ).pack(side="left")
+             ^
+  File "C:\Users\Tyler\AppData\Local\Python\pythoncore-3.14-64\Lib\tkinter\__init__.py", line 3392, in __init__
+    Widget.__init__(self, master, 'label', cnf, kw)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Tyler\AppData\Local\Python\pythoncore-3.14-64\Lib\tkinter\__init__.py", line 2805, in __init__
+    self.tk.call(
+    ~~~~~~~~~~~~^
+        (widgetName, self._w) + extra + self._options(cnf))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_tkinter.TclError: unknown option "-lettersp"
