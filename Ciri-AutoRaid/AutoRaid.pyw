@@ -636,6 +636,7 @@ class App(tk.Tk):
         cfg = _load_config()
         self.geometry(cfg.get("geometry", "1290x660+60+60"))
         self.zones      = cfg.get("zones", _default_zones())
+        self.fire_offset_cs = cfg.get("fire_offset_cs", 24)
         self.running    = False
         self.edit_mode  = False
         self.fired      = set()
@@ -781,6 +782,34 @@ class App(tk.Tk):
         self.lbl_status = tk.Label(bar, text="Ready", bg=PANEL, fg=FG2,
                                    font=("Segoe UI", 8))
         self.lbl_status.pack(side="left", padx=8)
+
+        tk.Frame(bar, bg=BORDER, width=1).pack(side="left", fill="y", pady=8)
+
+        tk.Label(bar, text="OFFSET cs", bg=PANEL, fg=FG2,
+                 font=("Segoe UI", 7, "bold")).pack(side="left", padx=(8,3))
+
+        self.offset_var = tk.StringVar(value=str(self.fire_offset_cs))
+        self.ent_offset = tk.Entry(bar, textvariable=self.offset_var, width=4,
+                       bg=PANEL2, fg=ACCENT2, insertbackground=ACCENT2,
+                       font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
+                       highlightthickness=1, highlightbackground=BORDER,
+                       highlightcolor=ACCENT2, justify="center")
+        self.ent_offset.pack(side="left", padx=(0,8), pady=8, ipady=2)
+
+        def _commit_offset(event=None):
+            raw = self.offset_var.get().strip()
+            try:
+                val = int(raw)
+            except ValueError:
+                val = self.fire_offset_cs
+            val = max(-200, min(200, val))
+            self.fire_offset_cs = val
+            self.offset_var.set(str(val))
+            self._save_cfg()
+            self.lbl_status.config(text=f"Fire offset set to {val} cs")
+
+        self.ent_offset.bind("<Return>", _commit_offset)
+        self.ent_offset.bind("<FocusOut>", _commit_offset)
 
         btn_close = tk.Button(
             bar, text="✕", command=self._on_close,
@@ -937,6 +966,7 @@ class App(tk.Tk):
         cfg = _load_config()
         cfg["geometry"]            = geom
         cfg["zones"]               = self.zones
+        cfg["fire_offset_cs"]      = self.fire_offset_cs
         cfg["current_slots"]       = self._get_current_slot_data()
         cfg["current_enabled"]     = [s.en_var.get() for s in self._slots]
         cfg["selected_profile_idx"] = self._sidebar.get_selected_idx()
@@ -1083,7 +1113,6 @@ class App(tk.Tk):
         return pairs
 
     def _loop(self):
-        FIRE_OFFSET_CS = 24
         FREEZE_READS   = 3
         triggers = self._collect_triggers()
         self._read_lock = threading.Lock()
@@ -1221,7 +1250,7 @@ class App(tk.Tk):
                     for (zi, trig) in triggers:
                         key = (zi, trig)
                         if key not in self.fired:
-                            if cs <= trig + FIRE_OFFSET_CS:
+                            if cs <= trig + self.fire_offset_cs:
                                 self.fired.add(key)
                                 self.lbl_status.config(
                                     text=f"Slot {zi}  fired at  {_cs_to_str(cs)}")
