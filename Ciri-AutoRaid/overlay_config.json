@@ -1,5 +1,5 @@
 {
-  "geometry": "1474x877+59+106",
+  "geometry": "1474x883+59+106",
   "zones": [
     [
       0.4622550872146649,
@@ -81,5 +81,6 @@
     true,
     true
   ],
-  "selected_profile_idx": 0
+  "selected_profile_idx": 0,
+  "fire_offset_cs": 24
 }
